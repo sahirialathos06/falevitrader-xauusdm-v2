@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>FaleviTrader — XAUUSD M5 v2</title>
+  <style>
+    :root{--bg:#071021;--panel:#0b1220;--muted:#9ca3af;--text:#e6eef8;--green:#26a69a;--red:#ef5250;--accent:#3b82f6}
+    body{margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:var(--text)}
+    .app{display:flex;gap:12px;padding:12px;height:100vh;box-sizing:border-box}
+    .left{flex:1;background:var(--panel);border-radius:10px;padding:12px;display:flex;flex-direction:column}
+    .right{width:380px;background:var(--panel);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px}
+    header{display:flex;justify-content:space-between;align-items:center}
+    h1{margin:0;font-size:16px}
+    .controls{display:flex;gap:8px;align-items:center}
+    input,select,button{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)}
+    #chart{flex:1;border-radius:8px;overflow:hidden;background:#071022;padding:6px;min-height:420px}
+    .metrics{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+    .metric{background:rgba(255,255,255,0.02);padding:8px;border-radius:8px;font-size:13px;color:var(--muted);min-width:100px;text-align:center}
+    .panel{background:rgba(255,255,255,0.02);padding:12px;border-radius:8px}
+    .pred-title{font-weight:700;font-size:16px;margin-bottom:6px;color:var(--muted)}
+    .pred-value{font-weight:800;font-size:22px;margin-bottom:6px}
+    .copy{padding:8px;border-radius:8px;background:rgba(255,255,255,0.02);cursor:pointer;text-align:center}
+    .small{font-size:12px;color:var(--muted)}
+    footer{font-size:12px;color:var(--muted);text-align:center;padding-top:6px}
+    .btn{background:var(--accent);color:#fff;border:none;padding:8px;border-radius:8px;cursor:pointer}
+    .row{display:flex;gap:8px;align-items:center}
+    @media(max-width:900px){ .app{flex-direction:column;height:100vh} .right{width:100%} }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="left">
+      <header>
+        <div>
+          <h1>FaleviTrader — XAUUSD (M5) v2</h1>
+          <div class="small" id="clock">Waktu lokal: --:--:--</div>
+        </div>
+        <div class="controls">
+          <input id="symbol" value="XAU/USD" style="width:120px"/>
+          <select id="interval"><option value="5min">M5</option></select>
+          <input id="apikey" placeholder="Twelve Data API Key" style="width:260px" value="280902dce02742d8ae851f26de491a9b"/>
+          <button id="start" class="btn">Mulai</button>
+        </div>
+      </header>
+
+      <div id="chart">
+        <div id="tv" style="height:100%;"></div>
+      </div>
+
+      <div class="metrics" style="margin-top:10px">
+        <div class="metric">MA10: <div id="ma10">—</div></div>
+        <div class="metric">MA50: <div id="ma50">—</div></div>
+        <div class="metric">MA200: <div id="ma200">—</div></div>
+        <div class="metric">ATR(14): <div id="atr">—</div></div>
+        <div class="metric">Confidence: <div id="conf">—</div></div>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="panel">
+        <div class="pred-title">Sinyal & Zona Entry (5 menit)</div>
+        <div id="trendText" class="pred-value">—</div>
+        <div id="countdown" class="small">Waktu sampai candle berikutnya: --:--</div>
+        <div style="margin-top:10px">
+          <div>Entry: <strong id="entry">—</strong></div>
+          <div>TP: <strong id="tp">—</strong></div>
+          <div>SL: <strong id="sl">—</strong></div>
+        </div>
+        <div style="margin-top:8px" class="small">Atur ukuran PIP & TP/SL (pips):</div>
+        <div class="row">
+          <input id="pipSize" value="0.01" style="width:90px"/><div class="small">Nilai 1 pip (contoh: 0.01)</div>
+        </div>
+        <div class="row">
+          <input id="tpPips" value="40" style="width:90px"/><div class="small">TP (pips)</div>
+          <input id="slPips" value="20" style="width:90px"/><div class="small">SL (pips)</div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <div class="copy" id="copyEntry">Salin Entry</div>
+          <div class="copy" id="copyTP">Salin TP</div>
+          <div class="copy" id="copySL">Salin SL</div>
+        </div>
+      </div>
+
+      <div class="panel small">
+        <div>Riwayat Sinyal:</div>
+        <div id="log" style="max-height:200px;overflow:auto;margin-top:6px"></div>
+      </div>
+
+      <footer>FaleviTrader v2 • M5 • Pips mode</footer>
+    </div>
+  </div>
+
+  <audio id="beep" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
+  <script src="https://unpkg.com/lightweight-charts@4.5.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    // utilities
+    function ema(arr,n){const out=[];const k=2/(n+1);let prev=null;for(let i=0;i<arr.length;i++){const v=arr[i];if(prev===null){prev=v;out.push(v);prev=v;continue;}prev=v*k+prev*(1-k);out.push(prev);}return out;}
+    function atrFromOHLC(data, period=14){const trs=[];for(let i=0;i<data.length;i++){if(i===0){trs.push(data[i].high-data[i].low);continue;}trs.push(Math.max(data[i].high-data[i].low,Math.abs(data[i].high-data[i-1].close),Math.abs(data[i].low-data[i-1].close)));}const out=[];let prev=null;for(let i=0;i<trs.length;i++){if(i+1<period){out.push(null);continue;}if(i+1===period){let s=0;for(let j=0;j<period;j++)s+=trs[j];prev=s/period;out.push(prev);}else{prev=(prev*(period-1)+trs[i])/period;out.push(prev);}}return out;}
+    async function fetchBars(symbol, interval, apikey){const url=`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=500&format=json&apikey=${apikey}`;const r=await fetch(url);if(!r.ok)throw new Error('Network '+r.status);const data=await r.json();if(data.status==='error')throw new Error(data.message||'API error');if(!data.values)throw new Error('No data');return data.values.reverse().map(b=>({time:Math.floor(new Date(b.datetime).getTime()/1000),open:+b.open,high:+b.high,low:+b.low,close:+b.close}));}
+
+    // chart setup
+    const tvEl=document.getElementById('tv');
+    const chart = LightweightCharts.createChart(tvEl,{layout:{background:'#071022',textColor:'#cbd5e1'},rightPriceScale:{visible:true},timeScale:{timeVisible:true}});
+    const candles = chart.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5250',borderVisible:false,wickVisible:true});
+    const ma10Line = chart.addLineSeries({color:'#f59e0b',lineWidth:1});
+    const ma50Line = chart.addLineSeries({color:'#60a5fa',lineWidth:1});
+    const ma200Line = chart.addLineSeries({color:'#a78bfa',lineWidth:1});
+
+    const startBtn=document.getElementById('start'), apikeyInput=document.getElementById('apikey'), symbolInput=document.getElementById('symbol');
+    const ma10El=document.getElementById('ma10'), ma50El=document.getElementById('ma50'), ma200El=document.getElementById('ma200'), atrEl=document.getElementById('atr'), confEl=document.getElementById('conf');
+    const trendText=document.getElementById('trendText'), entryEl=document.getElementById('entry'), tpEl=document.getElementById('tp'), slEl=document.getElementById('sl');
+    const copyEntry=document.getElementById('copyEntry'), copyTP=document.getElementById('copyTP'), copySL=document.getElementById('copySL');
+    const pipSizeInput=document.getElementById('pipSize'), tpPipsInput=document.getElementById('tpPips'), slPipsInput=document.getElementById('slPips');
+    const logEl=document.getElementById('log'), countdownEl=document.getElementById('countdown'), clockEl=document.getElementById('clock');
+    const beep=document.getElementById('beep');
+
+    let poll=null, lastDir=null, lastSignalTime=null;
+
+    function updateClock(){
+      const d=new Date(); const hh=d.getHours().toString().padStart(2,'0'); const mm=d.getMinutes().toString().padStart(2,'0'); const ss=d.getSeconds().toString().padStart(2,'0');
+      clockEl.textContent = 'Waktu lokal: ' + hh+':'+mm+':'+ss;
+      // countdown to next multiple of 5 minutes
+      const next = new Date(Math.ceil(d.getTime()/(5*60*1000))*(5*60*1000));
+      let diff = Math.max(0, Math.floor((next - d)/1000));
+      const m = Math.floor(diff/60).toString().padStart(2,'0'); const s = (diff%60).toString().padStart(2,'0');
+      countdownEl.textContent = 'Waktu sampai candle berikutnya: ' + m + ':' + s;
+    }
+    setInterval(updateClock,1000);
+
+    function predict(bars){
+      const closes=bars.map(b=>b.close);
+      if(closes.length<210) return {dir:'MENUNGGU DATA',score:0.5};
+      const ma10=ema(closes,10), ma50=ema(closes,50), ma200=ema(closes,200);
+      const i=closes.length-1; const ma10v=ma10[i], ma50v=ma50[i], ma200v=ma200[i];
+      const cross = ma10v>ma50v?1:-1; const trendLong = ma50v>ma200v?1:-1;
+      const momentum = (closes[i]-closes[i-3])/closes[i-3];
+      let score = 0.5 + 0.25*cross + 0.15*trendLong + (momentum*5);
+      score = 1/(1+Math.exp(-(score-0.5)*3));
+      const dir = score>0.6?'BUY':(score<0.4?'SELL':'NETRAL');
+      return {dir,score,ma10v,ma50v,ma200v};
+    }
+
+    function computeZonesPips(bars, dir, pipSize, tpPips, slPips){
+      const last = bars[bars.length-1].close;
+      const tp = dir==='BUY' ? +(last + tpPips * pipSize).toFixed(2) : +(last - tpPips * pipSize).toFixed(2);
+      const sl = dir==='BUY' ? +(last - slPips * pipSize).toFixed(2) : +(last + slPips * pipSize).toFixed(2);
+      return {entry:+last.toFixed(2), tp, sl};
+    }
+
+    async function updateAll(){
+      const key=apikeyInput.value.trim(); const symbol=symbolInput.value.trim()||'XAU/USD';
+      if(!key){ alert('Masukkan API key Twelve Data'); return; }
+      try{
+        const bars=await fetchBars(symbol,'5min',key);
+        candles.setData(bars);
+        const closes=bars.map(b=>b.close);
+        const ma10Arr=ema(closes,10), ma50Arr=ema(closes,50), ma200Arr=ema(closes,200);
+        const ma10v=ma10Arr[ma10Arr.length-1]||null, ma50v=ma50Arr[ma50Arr.length-1]||null, ma200v=ma200Arr[ma200Arr.length-1]||null;
+        ma10El.textContent = ma10v?ma10v.toFixed(2):'—'; ma50El.textContent = ma50v?ma50v.toFixed(2):'—'; ma200El.textContent = ma200v?ma200v.toFixed(2):'—';
+        ma10Line.setData(bars.map((b,i)=>({time:b.time,value:ma10Arr[i]||null})).filter(d=>d.value!==null));
+        ma50Line.setData(bars.map((b,i)=>({time:b.time,value:ma50Arr[i]||null})).filter(d=>d.value!==null));
+        ma200Line.setData(bars.map((b,i)=>({time:b.time,value:ma200Arr[i]||null})).filter(d=>d.value!==null));
+        const atrArr = atrFromOHLC(bars,14); const atr = atrArr[atrArr.length-1]||null; atrEl.textContent = atr?atr.toFixed(3):'—';
+        const p = predict(bars); confEl.textContent = (p.score*100).toFixed(0) + '%'; trendText.textContent = p.dir==='BUY'?'BUY ↑':(p.dir==='SELL'?'SELL ↓':'NETRAL');
+        // compute pips zones
+        const pipSize = parseFloat(pipSizeInput.value) || 0.01;
+        const tpPips = parseFloat(tpPipsInput.value) || 40;
+        const slPips = parseFloat(slPipsInput.value) || 20;
+        const zones = computeZonesPips(bars, p.dir, pipSize, tpPips, slPips);
+        entryEl.textContent = zones.entry.toFixed(2); tpEl.textContent = zones.tp.toFixed(2); slEl.textContent = zones.sl.toFixed(2);
+
+        // log if new signal or time changed to new candle
+        const now = new Date();
+        const nextCandleTime = Math.ceil(now.getTime()/(5*60*1000))*(5*60*1000);
+        const signalKey = p.dir + '|' + Math.floor(nextCandleTime/1000);
+        if(signalKey !== lastSignalTime){
+          // record
+          const row = document.createElement('div');
+          const hh = now.getHours().toString().padStart(2,'0'); const mm = now.getMinutes().toString().padStart(2,'0');
+          row.textContent = `[${hh}:${mm}] ${p.dir} | Entry ${zones.entry.toFixed(2)} TP ${zones.tp.toFixed(2)} SL ${zones.sl.toFixed(2)}`;
+          logEl.prepend(row);
+          // sound on flip
+          const dirSimple = p.dir==='BUY'?1:(p.dir==='SELL'?-1:0);
+          if(lastDir !== null && Math.sign(dirSimple)!==Math.sign(lastDir) && Math.abs(dirSimple)!==0){ try{ beep.play(); }catch(e){} }
+          lastDir = dirSimple;
+          lastSignalTime = signalKey;
+        }
+
+      }catch(err){ console.error(err); alert('Error: '+err.message); }
+    }
+
+    start.addEventListener('click', ()=>{ updateAll(); if(poll) clearInterval(poll); poll=setInterval(updateAll,30000); });
+    copyEntry.onclick = ()=>{ navigator.clipboard.writeText(entry.textContent); copyEntry.textContent='Tersalin'; setTimeout(()=>copyEntry.textContent='Salin Entry',900); };
+    copyTP.onclick = ()=>{ navigator.clipboard.writeText(tp.textContent); copyTP.textContent='Tersalin'; setTimeout(()=>copyTP.textContent='Salin TP',900); };
+    copySL.onclick = ()=>{ navigator.clipboard.writeText(sl.textContent); copySL.textContent='Tersalin'; setTimeout(()=>copySL.textContent='Salin SL',900); };
+
+  </script>
+</body>
+</html>
