@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FaleviTrader — XAUUSDM (M5)</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FaleviTrader — Multi-Symbol & Multi-Interval</title>
   <style>
     body {
       background-color: #0d1117;
@@ -58,11 +58,25 @@
   </style>
 </head>
 <body>
-  <h1>📊 FaleviTrader — XAUUSDM (M5)</h1>
+  <h1>📊 FaleviTrader — Multi-Symbol & Multi-Interval</h1>
   <div class="controls">
-    <input id="symbol" value="XAUUSDM" style="width:120px" />
+    <select id="symbol">
+      <option value="XAU/USD">XAU/USD</option>
+      <option value="EUR/USD">EUR/USD</option>
+      <option value="BTC/USD">BTC/USD</option>
+      <option value="USD/JPY">USD/JPY</option>
+      <option value="GBP/USD">GBP/USD</option>
+      <option value="AUD/USD">AUD/USD</option>
+      <option value="NZD/USD">NZD/USD</option>
+      <option value="ETH/USD">ETH/USD</option>
+    </select>
     <select id="interval">
-      <option value="5min">M5</option>
+      <option value="1min">M1</option>
+      <option value="5min" selected>M5</option>
+      <option value="15min">M15</option>
+      <option value="30min">M30</option>
+      <option value="1h">H1</option>
+      <option value="4h">H4</option>
     </select>
     <input id="apikey" placeholder="Masukkan Twelve Data API Key Anda" style="width:260px" />
     <button id="start">Mulai</button>
@@ -80,6 +94,7 @@
   <script>
     const ctx = document.getElementById('chart').getContext('2d');
     let chart;
+    let updateInterval;
 
     function updateClock() {
       const now = new Date();
@@ -88,84 +103,107 @@
     }
     setInterval(updateClock, 1000);
 
-    document.getElementById('start').addEventListener('click', async () => {
+    async function fetchData(symbol, interval, apikey) {
+      const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&apikey=${apikey}&outputsize=30`;
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!data.values) throw new Error(data.message || 'Simbol tidak ditemukan atau API key salah');
+        return data.values.reverse();
+      } catch (err) {
+        throw err;
+      }
+    }
+
+    function updateChart(labels, prices, symbol) {
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: `${symbol}`,
+            data: prices,
+            borderColor: '#58a6ff',
+            borderWidth: 2,
+            tension: 0.3,
+            fill: false
+          }]
+        },
+        options: {
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#8b949e' } },
+            y: { ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    function calculateSignal(prices) {
+      if (prices.length < 3) return;
+      const last = prices[prices.length - 1];
+      const prev1 = prices[prices.length - 2];
+      const prev2 = prices[prices.length - 3];
+      const trend = (last - prev1) + (prev1 - prev2);
+
+      let signalText, tp, sl;
+      if (trend > 0) {
+        signalText = '📈 Entry BUY';
+        tp = (last + 0.30).toFixed(2);
+        sl = (last - 0.20).toFixed(2);
+      } else if (trend < 0) {
+        signalText = '📉 Entry SELL';
+        tp = (last - 0.30).toFixed(2);
+        sl = (last + 0.20).toFixed(2);
+      } else {
+        signalText = '⏸️ Sinyal Netral';
+        tp = sl = last.toFixed(2);
+      }
+
+      const timeNow = new Date().toLocaleTimeString('id-ID');
+      document.getElementById('signal').innerHTML = `
+        ${signalText}<br>
+        ⏰ Waktu: ${timeNow}<br>
+        💰 Entry: ${last}<br>
+        🎯 TP: ${tp}<br>
+        🛡️ SL: ${sl}
+      `;
+    }
+
+    async function updateAll() {
       const symbol = document.getElementById('symbol').value;
       const interval = document.getElementById('interval').value;
-      const apikey = document.getElementById('apikey').value;
+      const apikey = document.getElementById('apikey').value.trim();
 
       if (!apikey) {
         alert('Masukkan API key terlebih dahulu!');
         return;
       }
 
-      const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=${interval}&apikey=${apikey}&outputsize=30`;
-
       try {
-        const res = await fetch(url);
-        const data = await res.json();
-
-        if (!data.values) {
-          alert('Gagal memuat data. Periksa API key atau simbol.');
-          return;
-        }
-
-        const values = data.values.reverse();
+        const values = await fetchData(symbol, interval, apikey);
         const labels = values.map(v => v.datetime);
         const prices = values.map(v => parseFloat(v.close));
 
-        if (chart) chart.destroy();
-        chart = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels: labels,
-            datasets: [{
-              label: `${symbol} (M5)`,
-              data: prices,
-              borderColor: '#58a6ff',
-              borderWidth: 2,
-              tension: 0.3,
-              fill: false
-            }]
-          },
-          options: {
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { ticks: { color: '#8b949e' } },
-              y: { ticks: { color: '#8b949e' } }
-            }
-          }
-        });
-
-        // ====== Buat prediksi sederhana (berdasarkan slope harga terakhir) ======
-        const last = prices[prices.length - 1];
-        const prev = prices[prices.length - 2];
-        const diff = last - prev;
-
-        let signalText, tp, sl;
-        if (diff > 0) {
-          signalText = '📈 Entry BUY';
-          tp = (last + 0.30).toFixed(2);
-          sl = (last - 0.20).toFixed(2);
-        } else {
-          signalText = '📉 Entry SELL';
-          tp = (last - 0.30).toFixed(2);
-          sl = (last + 0.20).toFixed(2);
-        }
-
-        const timeNow = new Date().toLocaleTimeString('id-ID');
-        document.getElementById('signal').innerHTML = `
-          ${signalText}<br>
-          ⏰ Waktu: ${timeNow}<br>
-          💰 Entry: ${last}<br>
-          🎯 TP: ${tp}<br>
-          🛡️ SL: ${sl}
-        `;
-
+        updateChart(labels, prices, symbol);
+        calculateSignal(prices);
       } catch (err) {
-        alert('Terjadi kesalahan koneksi API.');
+        alert('Gagal memuat data: ' + err.message);
         console.error(err);
       }
+    }
+
+    document.getElementById('start').addEventListener('click', () => {
+      if (updateInterval) clearInterval(updateInterval);
+      updateAll();
+      const intervalValue = document.getElementById('interval').value;
+      let intervalMs = 60000; // default 1 menit
+      if (intervalValue.endsWith('min')) intervalMs = parseInt(intervalValue) * 60000;
+      else if (intervalValue.endsWith('h')) intervalMs = parseInt(intervalValue) * 3600000;
+      updateInterval = setInterval(updateAll, intervalMs);
+      alert(`Auto-update diaktifkan tiap ${intervalValue}`);
     });
   </script>
 </body>
-  </html>
+</html>
